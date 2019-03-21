@@ -6,6 +6,7 @@
 
 
 #include <dynamicThreadPool.h>
+#include <concurrentQueue.h>
 
 #include <iostream>
 #include <unistd.h>
@@ -16,15 +17,18 @@ using namespace dynamicThreadPool;
 
 void t00 ();
 void t01 ();
+void t02 ();
 
 
 int main (int argc, char **argv) {
 
 	cout << "Hello user!\n\n";
 	
-	t00 ();
+	//t00 ();
 
 	t01 ();
+
+	//t02 ();
 
 	cout << "\n\nBye bye!\n";
 
@@ -57,20 +61,45 @@ void t00 () {
 
 void t01 () {
 
-	DynamicThreadPool pool (10);
-	DynamicThreadPool *poolPtr	= &pool;
+	std::shared_ptr<DynamicThreadPool> poolPtr	= std::make_shared<DynamicThreadPool> (4);
+	
+	/*DynamicThreadPool pool (5);
+	DynamicThreadPool *poolPtr = &pool;//*/
+	//cout << "use_count  " << pool.use_count () << "\n";
 
-	auto res1	= pool.submit ([poolPtr] {
-		std::this_thread::sleep_for (std::chrono::seconds (11));
-		poolPtr->stop ();
+	auto handle	= std::async (std::launch::async, [poolPtr] {
+		//cout << "Async use_count  " << pool.use_count () << "\n";
+		//cout << "Inside async..\n";
+		std::this_thread::sleep_for (std::chrono::milliseconds (10000));
+		cout << "Stopping pool!\n";
+		poolPtr->stop();
+
+		return 8;
 	});
 
 	for (int i=0; i<20; i++) {
-		pool.submit ([i] () {
+		poolPtr->submit ([i] () {
+			cout<< "Task  " << i << "  done!\n";
+		});
+
+		std::this_thread::sleep_for (std::chrono::milliseconds (100));
+	}
+
+	poolPtr->join ();
+}
+
+
+
+
+void t02 () {
+	std::shared_ptr<DynamicThreadPool> pool	= std::make_shared<DynamicThreadPool> (3);
+
+	for (int i=0; i<20; i++) {
+		pool->submit ([i] () {
 			cout<< "Inside task " << i << endl;
-			std::this_thread::sleep_for (std::chrono::milliseconds (250));
+			std::this_thread::sleep_for (std::chrono::milliseconds (1000));
 		});
 	}
 
-	pool.join ();
+	pool->join ();
 }
