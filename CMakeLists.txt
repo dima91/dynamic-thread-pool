@@ -9,8 +9,8 @@ find_library (THREAD_LIB	libpthread.so)
 
 include_directories(include)
 
-#add_executable(Test0 examples/test0.cpp)
-#target_link_libraries (Test0 ${THREAD_LIB})
+add_executable(Test0 examples/test0.cpp)
+target_link_libraries (Test0 ${THREAD_LIB})
 
 add_executable(CqTest examples/cqTest.cpp)
 target_link_libraries (CqTest ${THREAD_LIB})

@@ -13,7 +13,7 @@
 #include <list>
 #include <functional>
 #include <memory>
-#include <iostream>		// FIXME REMOVE ME
+//#include <iostream>		// FIXME REMOVE ME
 
 
 namespace dynamicThreadPool {
@@ -29,7 +29,7 @@ namespace dynamicThreadPool {
 
 	class WorkerThread {
 	private :
-		using AfterComputationCallback	= std::function<void (WorkerThread &)>;
+		using AfterComputationCallback	= std::function<void (WorkerThread*)>;
 		
 		std::thread				workerThread;
 		std::mutex				workerMutex;
@@ -57,22 +57,21 @@ namespace dynamicThreadPool {
 
 	class DynamicThreadPool {
 	private :
-		std::thread taskDispatcher;
-		std::list<std::shared_ptr<WorkerThread>> workers;
-		std::queue<DefaultCallback>	tasks;
+		std::list<WorkerThread*>	freeWorkers;
+		std::queue<DefaultCallback>	pendingTasks;
+		std::thread					workersManager;
+		std::thread					tasksManager;
 
-		std::mutex				wMutex;
-		std::condition_variable	wCondition;
-		std::mutex				tMutex;
-		std::condition_variable	tCondition;
+		std::atomic<int>			activeWorkersCount;
+		
+		std::mutex				managerMutex;
+		std::condition_variable	workersCondition;
+		std::condition_variable	tasksCondition;
 
 		std::atomic<Status>		status;
 
 		std::atomic<int> upperLimit;
 		std::atomic<int> lowerLimit;
-
-		void pushNewWorker	();
-		void popWorker		();
 
 
 	public:
@@ -86,6 +85,7 @@ namespace dynamicThreadPool {
 		void stop ();
 
 		size_t workersCount		();
+		size_t freeWorkersCount	();
 		size_t tasksCount		();
 
 		void setUpperLimit		(size_t uLimit);
@@ -116,7 +116,7 @@ namespace dynamicThreadPool {
 						(*nextTask) ();
 						nextTask	= nullptr;
 						computing	= false;
-						afterComputation (*this);
+						afterComputation (this);
 					} catch (...) {
 						// Some execution returned an error: stopping current WorkerThread!
 						haltMe		= true;
@@ -133,6 +133,8 @@ namespace dynamicThreadPool {
 	WorkerThread::~WorkerThread () {
 		stop ();		
 		join ();
+
+		//std::cout << "Deleted!\n";
 	}
 
 
@@ -153,21 +155,14 @@ namespace dynamicThreadPool {
 	void WorkerThread::stop () {
 		if (status == Running) {
 			haltMe	= true;
-			try {
-				workerCondition.notify_one ();
-			} catch (std::bad_function_call &e) {
-				std::cout << "What??\n";
-				std::cout << e.what () << std::endl;
-			}
+			workerCondition.notify_one ();
 		}
 	}
 
 
 	void WorkerThread::join () {
 		if (workerThread.joinable ()) {
-			std::cout << "Joining..\n";
 			workerThread.join ();
-			std::cout << "..joined!\n";
 		}
 	}
 
@@ -183,21 +178,77 @@ namespace dynamicThreadPool {
 	/* ==============   Implementation   ================ */
 
 	DynamicThreadPool::DynamicThreadPool (size_t initialSize) : status (Running) {
-		upperLimit	= -1;
-		lowerLimit	= 0;
+		upperLimit						= -1;
+		lowerLimit						= 0;
+		activeWorkersCount				= initialSize;
 
-		auto dispatcherFun	= [&] () {
-			// TODO
-			// TODO
-			// TODO
-			// TODO
-			// TODO
-			// TODO
-			// TODO
+
+		tasksManager	= std::thread ([this] {
+			while (status == Running) {
+				std::unique_lock<std::mutex> tasksLock (managerMutex);
+				tasksCondition.wait (tasksLock, [this] {
+					return (pendingTasks.size()>0 && freeWorkers.size()>0) || status==Stopped;
+				});
+
+				//std::cout << "Inserted a task!  " << freeWorkers.size () << std::endl;
+				if (status != Stopped) {
+					DefaultCallback newTask		= std::move (pendingTasks.front());
+					pendingTasks.pop ();
+					WorkerThread *worker		= std::move (freeWorkers.front());
+					freeWorkers.pop_front ();
+					worker->assignTask (newTask);
+					//std::cout << "Task assigned\n";
+				}
+			}
+		});
+
+		workersManager	= std::thread ([this] {
+			while (status == Running) {
+				std::unique_lock<std::mutex> workersLock (managerMutex);
+				workersCondition.wait (workersLock, [this] {
+					//std::cout << "Returning??   " << freeWorkers.size() << std::endl;
+					return (pendingTasks.size()>0 && freeWorkers.size()>0) || status==Stopped;
+				});
+				if (status != Stopped) {
+					DefaultCallback newTask		= std::move (pendingTasks.front());
+					pendingTasks.pop ();
+					WorkerThread *worker		= std::move (freeWorkers.front());
+					freeWorkers.pop_front ();
+					worker->assignTask (newTask);
+				}
+			}
+
+			//std::cout << "Destroying workers  " << freeWorkers.size() << std::endl;
+			while (activeWorkersCount > 0) {
+				std::unique_lock<std::mutex> workersLock (managerMutex);
+				while (freeWorkers.size()>0) {
+					WorkerThread *worker	= std::move (freeWorkers.front());
+					freeWorkers.pop_front ();
+					delete (worker);
+					activeWorkersCount--;
+				}
+
+				//std::cout << "fws: " << freeWorkers.size () << "\tawc: " << activeWorkersCount << std::endl;
+			}
+		});
+
+
+		std::function<void (WorkerThread*)> afterCompFun	=
+		[this] (WorkerThread *wt) {
+			//std::cout << "AfterComputingFunction..\n";
+			{
+				std::unique_lock<std::mutex> lock (managerMutex);
+				freeWorkers.push_back (wt);
+			}
+
+			workersCondition.notify_one ();
 		};
 
+
+
 		for (size_t i=0; i<initialSize; i++) {
-			pushNewWorker ();
+			WorkerThread *wt	= new WorkerThread (afterCompFun);
+			freeWorkers.emplace_front (wt);
 		}
 	}
 
@@ -214,120 +265,67 @@ namespace dynamicThreadPool {
 	auto DynamicThreadPool::submit (F&& f, Args&&... args) -> std::future<decltype(f(args...))> {
 		using ReturnType	= decltype(f(args...));
 
+		if (status != Running) {
+			throw std::runtime_error ("Trying to submit worker on stopped thread pool");
+		}
+
 		auto fun	= std::bind (std::forward<F>(f), std::forward<Args>(args)...);
 		auto task	= std::make_shared<std::packaged_task<ReturnType()>> (fun);
 		auto res	= task->get_future();
 		
 		{
-			std::unique_lock<std::mutex> qLock (tMutex);
-			if (status != Running)
-				throw std::runtime_error("enqueue on stopped ThreadPool");
-
-			tasks.emplace ([task] {(*task)();});
-			
-			std::unique_lock<std::mutex> wLock (wMutex);
-			if (workers.size()<tasks.size() && (((int)workers.size()+1)<upperLimit || upperLimit==-1))
-				pushNewWorker ();
+			std::unique_lock<std::mutex> tLock (managerMutex);			
+			pendingTasks.emplace ([task]{(*task)();});
+			//std::cout << "New pendingTasks.size : " << pendingTasks.size() << std::endl;
 		}
-		
-		tCondition.notify_one ();
+
+		tasksCondition.notify_one ();
+
 		return res;
 	}
 
 
 	void DynamicThreadPool::stop () {
 		status	= Stopped;
-		tCondition.notify_all ();
+
+		tasksCondition.notify_one ();
+		workersCondition.notify_one ();
 	}
 
 
 	void DynamicThreadPool::join () {
-		for (auto &worker : workers)
-			if (worker.second->joinable ())
-				worker.second->join();
+		if (tasksManager.joinable ())
+			tasksManager.join ();
+
+		if (workersManager.joinable ())
+			workersManager.join ();
 	}
 
 
 
 
-	void DynamicThreadPool::pushNewWorker () {
-		AfterC
-		WorkerCallback workerCallback	= [this] (AtomicBoolPointer haltMe) {
-			while (status==Running && *(haltMe.get())==false) {
-				DefaultCallback task;
-				{
-					std::unique_lock<std::mutex> lock (tMutex);
-					tCondition.wait_for (lock, std::chrono::milliseconds (500)),
-											[this, haltMe] {return status!=Running || !tasks.empty() ||
-															*(haltMe.get())==true;};
-					
-					if (status != Running || *(haltMe.get())==true)
-						break ;
-					else {
-						task	= std::move (tasks.front());
-						tasks.pop ();
-					}
-
-					std::unique_lock<std::mutex> wLock (wMutex);
-					if (workers.size()>2*tasks.size() && ((int)workers.size()-1)>lowerLimit) {
-
-						wLock.unlock ();
-						std::async (std::launch::async, [this] {
-							std::this_thread::sleep_for (std::chrono::milliseconds (100));
-							std::lock_guard<std::mutex> lock (wMutex);
-							popWorker ();
-						});
-					}
-				}
-
-				task();
-			}
-
-			std::cout << "EXITING!!!!!!!!\n";
-		};
-		
-		AtomicBoolPointer	haltMe	= std::make_shared<std::atomic<bool>> (false);
-		SharedThread		sharedT	= std::make_shared<std::thread> (workerCallback, haltMe); 
-		workers.emplace_front (std::make_pair<AtomicBoolPointer&, SharedThread&> (haltMe, sharedT));
+	size_t DynamicThreadPool::workersCount () {
+		return activeWorkersCount;
 	}
 
 
-
-
-	void DynamicThreadPool::popWorker () {
-		auto worker		= std::move (workers.back());
-		workers.pop_back ();
-		*(worker.first)	= true;
-		tCondition.notify_all ();
-
-		if (worker.second->joinable()) {
-			//std::cout << "Joining\n";
-			qCondition.notify_all ();
-			worker.second->join ();		// FIXME It is blocking for ever!!!! (only I try to decrease thread pool from worker thread)
-			//std::cout << "Joined\n";
-		}
-	}
-
-
-
-
-	size_t DynamicThreadPool::size () {
-		return workers.size ();
+	size_t DynamicThreadPool::freeWorkersCount () {
+		return freeWorkers.size ();
 	}
 
 
 	size_t DynamicThreadPool::tasksCount () {
-		return tasks.size ();
+		return pendingTasks.size ();
 	}
 	
 	
 	void DynamicThreadPool::setUpperLimit (size_t uLimit) {
 		upperLimit	= uLimit;
 
-		std::lock_guard<std::mutex> lock (wMutex);
+		/*std::lock_guard<std::mutex> lock (wMutex);
 		while (workers.size() > uLimit) {
 			popWorker ();
-		}
+		}*/
 	}
 
 
@@ -341,10 +339,10 @@ namespace dynamicThreadPool {
 	void DynamicThreadPool::setLowerLimit (size_t lLimit) {
 		lowerLimit	= lLimit;
 		
-		std::lock_guard<std::mutex> lock (wMutex);
+		/*std::lock_guard<std::mutex> lock (wMutex);
 		while (workers.size() < lLimit) {
 			pushNewWorker ();
-		}
+		}*/
 	}
 
 

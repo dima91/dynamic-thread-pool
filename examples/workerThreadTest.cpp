@@ -19,7 +19,7 @@ int main (int argc, char **argv) {
 
 	cout << "\n===========\nHello user!\n\n";
 
-	WorkerThread wt0 ([] (WorkerThread &thisWT) {
+	WorkerThread wt0 ([] (WorkerThread *thisWT) {
 		cout << "Put me at the end of the list!\n";
 	});
 	WorkerThread *wt0Ptr	= &wt0;
@@ -49,7 +49,7 @@ int main (int argc, char **argv) {
 
 
 
-	WorkerThread *wt1	= new WorkerThread ([] (WorkerThread &wt){
+	WorkerThread *wt1	= new WorkerThread ([] (WorkerThread *wt){
 		cout << "Do nothing\n";
 	});
 

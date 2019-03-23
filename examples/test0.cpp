@@ -61,31 +61,38 @@ void t00 () {
 
 void t01 () {
 
-	std::shared_ptr<DynamicThreadPool> poolPtr	= std::make_shared<DynamicThreadPool> (4);
-	
-	/*DynamicThreadPool pool (5);
-	DynamicThreadPool *poolPtr = &pool;//*/
-	//cout << "use_count  " << pool.use_count () << "\n";
+	std::shared_ptr<DynamicThreadPool> poolPtr	= std::make_shared<DynamicThreadPool> (2);
 
 	auto handle	= std::async (std::launch::async, [poolPtr] {
 		//cout << "Async use_count  " << pool.use_count () << "\n";
 		//cout << "Inside async..\n";
-		std::this_thread::sleep_for (std::chrono::milliseconds (10000));
+		std::this_thread::sleep_for (std::chrono::milliseconds (4000));
+		cout << "wc: " << poolPtr->workersCount() << "\ttc: " << poolPtr->tasksCount() << "\tfwc: " << poolPtr->freeWorkersCount() << endl;
 		cout << "Stopping pool!\n";
 		poolPtr->stop();
 
 		return 8;
 	});
 
-	for (int i=0; i<20; i++) {
-		poolPtr->submit ([i] () {
-			cout<< "Task  " << i << "  done!\n";
-		});
+	int i	= 0;
+	while (1) {
+		i++;
+		try {
+			poolPtr->submit ([i] () {
+				cout<< "Task  " << i << "  done!\n";
+				std::this_thread::sleep_for (std::chrono::milliseconds (300));
+			});
+		} catch (...) {
+			break;
+		}
 
 		std::this_thread::sleep_for (std::chrono::milliseconds (100));
 	}
 
+
 	poolPtr->join ();
+
+	std::cout << "Exited!\n";
 }
 
 
