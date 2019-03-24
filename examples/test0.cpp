@@ -6,7 +6,6 @@
 
 
 #include <dynamicThreadPool.h>
-#include <concurrentQueue.h>
 
 #include <iostream>
 #include <unistd.h>
@@ -26,9 +25,9 @@ int main (int argc, char **argv) {
 	
 	//t00 ();
 
-	t01 ();
+	//t01 ();
 
-	//t02 ();
+	t02 ();
 
 	cout << "\n\nBye bye!\n";
 
@@ -39,21 +38,24 @@ int main (int argc, char **argv) {
 
 
 void t00 () {
-	ConcurrentQueue<int> cQueue;
-	int i	= 10;
-	cQueue.push (i);
-	i		= 100;
-	cQueue.push (i);
-	i		= 1000;
-	cQueue.push (i);
+	auto h1	= std::async (std::launch::async, [] {
+		//cout << "Async use_count  " << pool.use_count () << "\n";
+		//cout << "Inside async..\n";
+		std::this_thread::sleep_for (std::chrono::milliseconds (4000));
+		cout << "Wake up!\n";
 
-	int j	= 0;
-	cQueue.pop (j);
-	cout << "First  : " << j << endl;
-	cQueue.pop (j);
-	cout << "Second : " << j << endl;
-	cQueue.pop (j);
-	cout << "Third  : " << j << endl;
+		return 8;
+	});
+
+
+	auto h2	= std::async (std::launch::async, [] {
+		while (1){
+			cout << "Iteration..\n";
+			std::this_thread::sleep_for (std::chrono::milliseconds (5000));
+		}
+
+		return 8;
+	});	
 }
 
 
@@ -108,5 +110,14 @@ void t02 () {
 		});
 	}
 
+	auto handle	= std::async (std::launch::async, [pool] {
+		std::this_thread::sleep_for (std::chrono::milliseconds (5000));
+		pool->stop ();
+	});
+
 	pool->join ();
 }
+
+
+
+

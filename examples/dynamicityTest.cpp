@@ -10,7 +10,7 @@
 #include <iostream>
 #include <unistd.h>
 
-//#define TRE
+#define UNO
 
 
 using namespace std;
@@ -22,28 +22,42 @@ int main (int argc, char **argv) {
 	cout << "Hello user!\n\n";
 
 	DynamicThreadPool pool;
+	pool.setUpperLimit (5);
 	DynamicThreadPool *poolPtr	= &pool;
 
 
 	#ifdef UNO
-	for (int i=0; i<10; i++) {
-		pool.submit ([poolPtr] {
-			cout << "Pool size: " << poolPtr->size () << endl;
+	cout << "INIT --> Pool size: " << poolPtr->workersCount () << endl;
+
+	for (int i=0; i<30; i++) {
+		pool.submit ([poolPtr, i] {
+			cout << "Pool size: " << poolPtr->workersCount () << endl;
 			std::this_thread::sleep_for (std::chrono::seconds (1));
-			cout << "End of task!\n";
+			cout << "End of task  " << i << endl;
 		});
+		//std::this_thread::sleep_for (std::chrono::milliseconds (500));
 	}
 
-	pool.setLowerLimit (5);
+	//std::this_thread::sleep_for (std::chrono::seconds (5));
+	//pool.setLowerLimit (2);
 	this_thread::sleep_for (std::chrono::seconds (4));
-	pool.setUpperLimit (3);
+	pool.setUpperLimit (2);
 	this_thread::sleep_for (std::chrono::seconds (2));
 
 	pool.submit ([poolPtr] {
-		cout << "Pool size: " << poolPtr->size () << endl;
+		cout << "Pool size: " << poolPtr->workersCount () << endl;
 		std::this_thread::sleep_for (std::chrono::seconds (1));
 		cout << "End of task!\n";
 	});
+
+	std::async (std::launch::async, [poolPtr] {
+		std::this_thread::sleep_for (std::chrono::seconds (10));
+		cout << "Stopping\n";
+		poolPtr->stop ();
+	});
+
+	poolPtr->join ();
+
 	#endif
 
 
@@ -138,7 +152,7 @@ int main (int argc, char **argv) {
 	#endif
 
 
-	this_thread::sleep_for (std::chrono::milliseconds (1));
+	//this_thread::sleep_for (std::chrono::milliseconds (1));
 
 	/*pool.stop ();
 

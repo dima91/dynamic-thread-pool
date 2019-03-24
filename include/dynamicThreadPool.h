@@ -13,7 +13,7 @@
 #include <list>
 #include <functional>
 #include <memory>
-//#include <iostream>		// FIXME REMOVE ME
+#include <iostream>		// FIXME REMOVE ME
 
 
 namespace dynamicThreadPool {
@@ -72,6 +72,11 @@ namespace dynamicThreadPool {
 
 		std::atomic<int> upperLimit;
 		std::atomic<int> lowerLimit;
+
+		void combineFirstWorkerWithFirstTask ();
+		void createFreeWorker ();
+		void destroyFirstFreeWorker ();
+		void resize ();
 
 
 	public:
@@ -180,24 +185,33 @@ namespace dynamicThreadPool {
 	DynamicThreadPool::DynamicThreadPool (size_t initialSize) : status (Running) {
 		upperLimit						= -1;
 		lowerLimit						= 0;
-		activeWorkersCount				= initialSize;
+		activeWorkersCount				= 0;
 
 
 		tasksManager	= std::thread ([this] {
 			while (status == Running) {
 				std::unique_lock<std::mutex> tasksLock (managerMutex);
 				tasksCondition.wait (tasksLock, [this] {
-					return (pendingTasks.size()>0 && freeWorkers.size()>0) || status==Stopped;
+					return	status==Stopped
+							|| (pendingTasks.size()>0 && freeWorkers.size()==0 && (activeWorkersCount<upperLimit || upperLimit == -1))	// I can create a worker
+							|| (pendingTasks.size()>0 && freeWorkers.size()>0);															// I can assign a task
 				});
+
+				// TODO Check if a worker can be created
 
 				//std::cout << "Inserted a task!  " << freeWorkers.size () << std::endl;
 				if (status != Stopped) {
-					DefaultCallback newTask		= std::move (pendingTasks.front());
-					pendingTasks.pop ();
-					WorkerThread *worker		= std::move (freeWorkers.front());
-					freeWorkers.pop_front ();
-					worker->assignTask (newTask);
-					//std::cout << "Task assigned\n";
+					//Checking if I can create a worker
+					if (pendingTasks.size()>0 && freeWorkers.size()==0 && (activeWorkersCount<upperLimit || upperLimit == -1)) {
+						std::cout << "***** Creating a worker..\n";
+						createFreeWorker ();
+					}
+					else if (pendingTasks.size()>0 && freeWorkers.size()>0) {
+						combineFirstWorkerWithFirstTask ();
+					}
+					else {
+						std::cout << "########### Problem on boolean conditions!\n";
+					}
 				}
 			}
 		});
@@ -206,15 +220,20 @@ namespace dynamicThreadPool {
 			while (status == Running) {
 				std::unique_lock<std::mutex> workersLock (managerMutex);
 				workersCondition.wait (workersLock, [this] {
-					//std::cout << "Returning??   " << freeWorkers.size() << std::endl;
-					return (pendingTasks.size()>0 && freeWorkers.size()>0) || status==Stopped;
+					return	(freeWorkers.size()>0 && pendingTasks.size()>0)									// I can assign a task
+							|| (freeWorkers.size()>0 && activeWorkersCount>upperLimit && upperLimit != -1)	// I haveto destroy a worker
+							|| status==Stopped;
 				});
+				//std::cout << "FreeWorkers:  " << freeWorkers.size() << std::endl;
+	
 				if (status != Stopped) {
-					DefaultCallback newTask		= std::move (pendingTasks.front());
-					pendingTasks.pop ();
-					WorkerThread *worker		= std::move (freeWorkers.front());
-					freeWorkers.pop_front ();
-					worker->assignTask (newTask);
+					//Checking if upperLimit is exceeded
+					if (activeWorkersCount>upperLimit && upperLimit != -1) {
+						std::cout << "***** Removing a worker..\n";
+						destroyFirstFreeWorker ();
+					}
+					else if (pendingTasks.size()>0)
+						combineFirstWorkerWithFirstTask ();
 				}
 			}
 
@@ -222,10 +241,7 @@ namespace dynamicThreadPool {
 			while (activeWorkersCount > 0) {
 				std::unique_lock<std::mutex> workersLock (managerMutex);
 				while (freeWorkers.size()>0) {
-					WorkerThread *worker	= std::move (freeWorkers.front());
-					freeWorkers.pop_front ();
-					delete (worker);
-					activeWorkersCount--;
+					destroyFirstFreeWorker ();
 				}
 
 				//std::cout << "fws: " << freeWorkers.size () << "\tawc: " << activeWorkersCount << std::endl;
@@ -233,22 +249,8 @@ namespace dynamicThreadPool {
 		});
 
 
-		std::function<void (WorkerThread*)> afterCompFun	=
-		[this] (WorkerThread *wt) {
-			//std::cout << "AfterComputingFunction..\n";
-			{
-				std::unique_lock<std::mutex> lock (managerMutex);
-				freeWorkers.push_back (wt);
-			}
-
-			workersCondition.notify_one ();
-		};
-
-
-
 		for (size_t i=0; i<initialSize; i++) {
-			WorkerThread *wt	= new WorkerThread (afterCompFun);
-			freeWorkers.emplace_front (wt);
+			createFreeWorker ();
 		}
 	}
 
@@ -258,6 +260,58 @@ namespace dynamicThreadPool {
 			stop ();
 
 		join ();
+	}
+
+
+	void DynamicThreadPool::combineFirstWorkerWithFirstTask () {
+		DefaultCallback newTask		= std::move (pendingTasks.front());
+		WorkerThread *worker		= std::move (freeWorkers.front());
+		pendingTasks.pop ();
+		freeWorkers.pop_front ();
+		worker->assignTask (newTask);
+	}
+
+
+	void DynamicThreadPool::createFreeWorker () {
+		std::function<void (WorkerThread*)> afterCompFun	= [this] (WorkerThread *wt) {
+			//std::cout << "AfterComputingFunction..\n";
+			{
+				std::unique_lock<std::mutex> lock (managerMutex);
+				freeWorkers.push_back (wt);
+			}
+
+			workersCondition.notify_one ();
+		};
+
+		WorkerThread *wt	= new WorkerThread (afterCompFun);
+		freeWorkers.emplace_front (wt);
+		activeWorkersCount++;
+	}
+
+
+	void DynamicThreadPool::destroyFirstFreeWorker () {
+		WorkerThread *worker	= std::move (freeWorkers.front());
+		freeWorkers.pop_front ();
+		delete (worker);
+		activeWorkersCount--;
+	}
+
+
+	void DynamicThreadPool::resize () {
+		std::cout << "awc: " << activeWorkersCount << "\tfws: " << freeWorkers.size () << "\tul: " << upperLimit << "\tll: " << lowerLimit << std::endl;
+
+		// Trying to decrese workers
+		while (freeWorkers.size()>0 && activeWorkersCount>upperLimit) {
+			std::cout << "Removing a worker..\n";
+			destroyFirstFreeWorker ();
+		}//*/
+
+		// Trying to increase workers
+		while (activeWorkersCount<lowerLimit) {
+			std::cout << "***** Creating a worker..\n";
+			std::cout << "awc: " << activeWorkersCount << "\tll: " << lowerLimit << "\tfws: " << freeWorkers.size () << std::endl;
+			createFreeWorker ();
+		}//*/
 	}
 
 
@@ -320,12 +374,15 @@ namespace dynamicThreadPool {
 	
 	
 	void DynamicThreadPool::setUpperLimit (size_t uLimit) {
-		upperLimit	= uLimit;
+		if ((int) uLimit < lowerLimit) {
+			std::string strLL	= std::to_string (lowerLimit);
+			std::string strIUL	= std::to_string (uLimit);
+			throw std::runtime_error ("Input value "+ strIUL +" is lower than current lower limit "+ strLL);
+		}
 
-		/*std::lock_guard<std::mutex> lock (wMutex);
-		while (workers.size() > uLimit) {
-			popWorker ();
-		}*/
+		std::unique_lock<std::mutex> lock (managerMutex);
+		upperLimit	= uLimit;
+		resize ();
 	}
 
 
@@ -337,12 +394,15 @@ namespace dynamicThreadPool {
 
 
 	void DynamicThreadPool::setLowerLimit (size_t lLimit) {
+		if ((int) lLimit > upperLimit && upperLimit != -1) {
+			std::string strUL	= std::to_string (upperLimit);
+			std::string strILL	= std::to_string (lLimit);
+			throw std::runtime_error ("Input value "+ strILL +" is greater than current upper limit "+ strUL);
+		}
+
+		std::unique_lock<std::mutex> lock (managerMutex);
 		lowerLimit	= lLimit;
-		
-		/*std::lock_guard<std::mutex> lock (wMutex);
-		while (workers.size() < lLimit) {
-			pushNewWorker ();
-		}*/
+		resize ();
 	}
 
 
