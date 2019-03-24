@@ -13,7 +13,6 @@
 #include <list>
 #include <functional>
 #include <memory>
-#include <iostream>		// FIXME REMOVE ME
 
 
 namespace dynamicThreadPool {
@@ -138,8 +137,6 @@ namespace dynamicThreadPool {
 	WorkerThread::~WorkerThread () {
 		stop ();		
 		join ();
-
-		//std::cout << "Deleted!\n";
 	}
 
 
@@ -197,20 +194,13 @@ namespace dynamicThreadPool {
 							|| (pendingTasks.size()>0 && freeWorkers.size()>0);															// I can assign a task
 				});
 
-				// TODO Check if a worker can be created
-
-				//std::cout << "Inserted a task!  " << freeWorkers.size () << std::endl;
 				if (status != Stopped) {
 					//Checking if I can create a worker
 					if (pendingTasks.size()>0 && freeWorkers.size()==0 && (activeWorkersCount<upperLimit || upperLimit == -1)) {
-						std::cout << "***** Creating a worker..\n";
 						createFreeWorker ();
 					}
 					else if (pendingTasks.size()>0 && freeWorkers.size()>0) {
 						combineFirstWorkerWithFirstTask ();
-					}
-					else {
-						std::cout << "########### Problem on boolean conditions!\n";
 					}
 				}
 			}
@@ -224,12 +214,10 @@ namespace dynamicThreadPool {
 							|| (freeWorkers.size()>0 && activeWorkersCount>upperLimit && upperLimit != -1)	// I haveto destroy a worker
 							|| status==Stopped;
 				});
-				//std::cout << "FreeWorkers:  " << freeWorkers.size() << std::endl;
 	
 				if (status != Stopped) {
 					//Checking if upperLimit is exceeded
 					if (activeWorkersCount>upperLimit && upperLimit != -1) {
-						std::cout << "***** Removing a worker..\n";
 						destroyFirstFreeWorker ();
 					}
 					else if (pendingTasks.size()>0)
@@ -237,14 +225,11 @@ namespace dynamicThreadPool {
 				}
 			}
 
-			//std::cout << "Destroying workers  " << freeWorkers.size() << std::endl;
 			while (activeWorkersCount > 0) {
 				std::unique_lock<std::mutex> workersLock (managerMutex);
 				while (freeWorkers.size()>0) {
 					destroyFirstFreeWorker ();
 				}
-
-				//std::cout << "fws: " << freeWorkers.size () << "\tawc: " << activeWorkersCount << std::endl;
 			}
 		});
 
@@ -274,7 +259,6 @@ namespace dynamicThreadPool {
 
 	void DynamicThreadPool::createFreeWorker () {
 		std::function<void (WorkerThread*)> afterCompFun	= [this] (WorkerThread *wt) {
-			//std::cout << "AfterComputingFunction..\n";
 			{
 				std::unique_lock<std::mutex> lock (managerMutex);
 				freeWorkers.push_back (wt);
@@ -298,20 +282,14 @@ namespace dynamicThreadPool {
 
 
 	void DynamicThreadPool::resize () {
-		std::cout << "awc: " << activeWorkersCount << "\tfws: " << freeWorkers.size () << "\tul: " << upperLimit << "\tll: " << lowerLimit << std::endl;
-
 		// Trying to decrese workers
 		while (freeWorkers.size()>0 && activeWorkersCount>upperLimit) {
-			std::cout << "Removing a worker..\n";
 			destroyFirstFreeWorker ();
-		}//*/
-
+		}
 		// Trying to increase workers
 		while (activeWorkersCount<lowerLimit) {
-			std::cout << "***** Creating a worker..\n";
-			std::cout << "awc: " << activeWorkersCount << "\tll: " << lowerLimit << "\tfws: " << freeWorkers.size () << std::endl;
 			createFreeWorker ();
-		}//*/
+		}
 	}
 
 
@@ -330,7 +308,6 @@ namespace dynamicThreadPool {
 		{
 			std::unique_lock<std::mutex> tLock (managerMutex);			
 			pendingTasks.emplace ([task]{(*task)();});
-			//std::cout << "New pendingTasks.size : " << pendingTasks.size() << std::endl;
 		}
 
 		tasksCondition.notify_one ();

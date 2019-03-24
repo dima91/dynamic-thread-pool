@@ -9,11 +9,17 @@ find_library (THREAD_LIB	libpthread.so)
 
 include_directories(include)
 
-add_executable(Test0 examples/test0.cpp)
-target_link_libraries (Test0 ${THREAD_LIB})
+add_executable(BaseUsage0 examples/baseUsage0.cpp)
+target_link_libraries (BaseUsage0 ${THREAD_LIB})
 
-add_executable(DynamicityTest examples/dynamicityTest.cpp)
-target_link_libraries (DynamicityTest ${THREAD_LIB})
+add_executable(BaseUsage1 examples/baseUsage1.cpp)
+target_link_libraries (BaseUsage1 ${THREAD_LIB})
+
+add_executable(DynamicityTest0 examples/dynamicityTest0.cpp)
+target_link_libraries (DynamicityTest0 ${THREAD_LIB})
+
+add_executable(DynamicityTest1 examples/dynamicityTest1.cpp)
+target_link_libraries (DynamicityTest1 ${THREAD_LIB})
 
 add_executable(WorkerThreadTest examples/workerThreadTest.cpp)
 target_link_libraries (WorkerThreadTest ${THREAD_LIB})

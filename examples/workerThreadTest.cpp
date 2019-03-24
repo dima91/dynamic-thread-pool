@@ -20,7 +20,7 @@ int main (int argc, char **argv) {
 	cout << "\n===========\nHello user!\n\n";
 
 	WorkerThread wt0 ([] (WorkerThread *thisWT) {
-		cout << "Put me at the end of the list!\n";
+		cout << "Inside AfterComputingCallback!\n";
 	});
 	WorkerThread *wt0Ptr	= &wt0;
 
@@ -28,17 +28,17 @@ int main (int argc, char **argv) {
 	cout << "Status?     " << wt0.getStatus() << endl;
 
 	std::thread par1 ([wt0Ptr] {
-		std::this_thread::sleep_for (std::chrono::milliseconds (2000));
+		std::this_thread::sleep_for (std::chrono::milliseconds (1000));
 		wt0Ptr->assignTask ([] {
-			cout << "Inside this task!";
+			cout << "Inside this task!\n";
 		});
-		std::this_thread::sleep_for (std::chrono::milliseconds (2000));
+		std::this_thread::sleep_for (std::chrono::milliseconds (1000));
 		wt0Ptr->stop ();
 	});
 
-	cout << "Joining..\n";
+	cout << "Joining ..\n";
 	wt0.join ();
-	cout << "Joined!\n";
+	cout << ".. hoined!\n";
 	par1.join ();
 
 
